@@ -1288,11 +1288,26 @@ class TektiteVideoCombiner15:
             if result.returncode != 0:
                 raise RuntimeError(f"FFmpeg audio mux failed.\n{result.stderr.strip()}")
 
-            os.replace(muxed_path, video_path)
+            self._replace_output_file(muxed_path, video_path)
             return video_path
         finally:
             self._safe_remove(wav_path)
             self._safe_remove(muxed_path)
+
+    def _replace_output_file(self, source_path: str, target_path: str) -> None:
+        try:
+            os.replace(source_path, target_path)
+            return
+        except OSError as exc:
+            print(
+                f"[Tektite Video Combiner 15.0] atomic replace failed for audio mux "
+                f"({type(exc).__name__}: {exc}); falling back to byte copy."
+            )
+
+        with open(source_path, "rb") as src, open(target_path, "wb") as dst:
+            shutil.copyfileobj(src, dst, length=16 * 1024 * 1024)
+            dst.flush()
+            os.fsync(dst.fileno())
 
     def _safe_remove(self, path: str) -> None:
         if not path:
