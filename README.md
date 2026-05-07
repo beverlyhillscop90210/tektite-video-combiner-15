@@ -10,7 +10,8 @@ Standalone ComfyUI custom node variant with a new class name so it can be instal
 - Accepts video paths, `.mp4`, single `.png`, PNG folders/globs, image sequences, and Comfy `IMAGE` batches
 - Prefers `.mp4` over preview `.png` when upstream combine nodes output both
 - Normalizes final stitched output to a fixed 1280x720 canvas
-- Remaps clips to `sequence_fps` while preserving source duration
+- Defaults to 25 fps and preserves every decoded frame when source FPS already matches `sequence_fps`
+- Remaps only mismatched-FPS clips to `sequence_fps` while preserving source duration
 - Preserves input slot order (`clip1`, `clip2`, ...)
 - Wait/poll logic with timeout and stable polls
 - Optional `audio` input for final mux

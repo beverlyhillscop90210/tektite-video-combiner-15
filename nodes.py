@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import time
 import wave
+from fractions import Fraction
 from typing import Any, Dict, List, Optional, Tuple
 
 import folder_paths
@@ -46,7 +47,7 @@ class TektiteVideoCombiner15:
                     },
                 ),
                 "output_format": (["mp4", "mov", "mkv"], {"default": "mp4"}),
-                "sequence_fps": ("FLOAT", {"default": 24.0, "min": 1.0, "max": 120.0, "step": 0.5}),
+                "sequence_fps": ("FLOAT", {"default": 25.0, "min": 1.0, "max": 120.0, "step": 0.5}),
                 "wait_timeout_sec": ("INT", {"default": 300, "min": 1, "max": 300, "step": 1}),
                 "poll_interval_sec": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 30.0, "step": 0.1}),
                 "stable_polls": ("INT", {"default": 3, "min": 1, "max": 20, "step": 1}),
@@ -1171,13 +1172,32 @@ class TektiteVideoCombiner15:
 
         overwrite_flag = "-y" if overwrite else "-n"
         gop = max(1, int(round(float(target_fps) * 2.0)))
-        vf = (
-            f"fps=fps={float(target_fps)}:round=near,"
+        source_fps = self._probe_video_fps(source_path)
+        fps_matches_target = (
+            source_fps > 0.0
+            and abs(source_fps - float(target_fps)) <= max(0.01, float(target_fps) * 0.001)
+        )
+        scale_pad_format = (
             f"scale={int(target_width)}:{int(target_height)}:"
             "force_original_aspect_ratio=decrease:force_divisible_by=2,"
             f"pad={int(target_width)}:{int(target_height)}:(ow-iw)/2:(oh-ih)/2,"
             "setsar=1,format=yuv420p"
         )
+        if fps_matches_target:
+            print(
+                f"[Tektite Video Combiner 15.0] Source is already {source_fps:.3f} fps; "
+                "preserving every decoded frame."
+            )
+            vf = f"setpts=N/({float(target_fps)}*TB),{scale_pad_format}"
+            fps_mode = "passthrough"
+        else:
+            if source_fps > 0.0:
+                print(
+                    f"[Tektite Video Combiner 15.0] Source is {source_fps:.3f} fps; "
+                    f"duration-preserving remap to {float(target_fps):.3f} fps."
+                )
+            vf = f"fps=fps={float(target_fps)}:round=near,{scale_pad_format}"
+            fps_mode = "cfr"
         cmd = [
             ffmpeg_path,
             overwrite_flag,
@@ -1191,7 +1211,7 @@ class TektiteVideoCombiner15:
             "-vf",
             vf,
             "-fps_mode",
-            "cfr",
+            fps_mode,
             "-c:v",
             video_codec,
             "-preset",
@@ -1214,6 +1234,39 @@ class TektiteVideoCombiner15:
                 f"Source: {source_path}\n"
                 f"{res.stderr.strip()}"
             )
+
+    def _probe_video_fps(self, path: str) -> float:
+        ffprobe_path = shutil.which("ffprobe")
+        if not ffprobe_path:
+            return 0.0
+
+        cmd = [
+            ffprobe_path,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=avg_frame_rate,r_frame_rate",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return 0.0
+
+        for raw in result.stdout.strip().splitlines():
+            value = raw.strip()
+            if not value or value == "0/0":
+                continue
+            try:
+                fps = float(Fraction(value))
+            except (ValueError, ZeroDivisionError):
+                continue
+            if fps > 0:
+                return fps
+        return 0.0
 
     def _probe_video_size(self, path: str) -> Tuple[int, int]:
         ffprobe_path = shutil.which("ffprobe")
